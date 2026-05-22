@@ -1,0 +1,9 @@
+para testar a permissao de uso de Bearer Token de customer:
+
+CUSTOMER pode acessar:
+- GET /users/test/customer
+- GET /users/me
+- GET /users/test
+
+CUSTOMER NÃO pode acessar:
+- GET /users/test/administrator
