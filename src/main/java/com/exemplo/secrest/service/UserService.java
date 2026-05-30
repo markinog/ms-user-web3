@@ -1,11 +1,14 @@
 package com.exemplo.secrest.service;
 
 import com.exemplo.secrest.dto.CreateUserDto;
+import com.exemplo.secrest.dto.EmailDto;
 import com.exemplo.secrest.dto.LoginUserDto;
 import com.exemplo.secrest.dto.RecoveryJwtTokenDto;
 import com.exemplo.secrest.dto.UserProfileDto;
 import com.exemplo.secrest.entity.Role;
 import com.exemplo.secrest.entity.User;
+import com.exemplo.secrest.enums.RoleName;
+import com.exemplo.secrest.producer.UserProducer;
 import com.exemplo.secrest.repository.UserRepository;
 import com.exemplo.secrest.security.service.JwtTokenService;
 import com.exemplo.secrest.security.service.UserDetailsImpl;
@@ -17,6 +20,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Random;
+import java.util.UUID;
 
 @Service
 public class UserService {
@@ -32,6 +37,12 @@ public class UserService {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private CodigoCacheService codigoCacheService;
+
+    @Autowired
+    private UserProducer userProducer;
 
     public RecoveryJwtTokenDto authenticateUser(LoginUserDto loginDto) {
         var authToken = new UsernamePasswordAuthenticationToken(
@@ -58,5 +69,27 @@ public class UserService {
                 .map(role -> role.getName().name())
                 .toList();
         return new UserProfileDto(user.getId(), user.getEmail(), roles);
+    }
+
+    public void requestCode(String email) {
+        User user = userRepository.findByEmail(email).orElseGet(() -> {
+            User temp = User.builder()
+                    .email(email)
+                    .password(passwordEncoder.encode(UUID.randomUUID().toString()))
+                    .roles(List.of(Role.builder().name(RoleName.ROLE_CUSTOMER).build()))
+                    .build();
+            return userRepository.save(temp);
+        });
+
+        String code = String.format("%06d", new Random().nextInt(1_000_000));
+        codigoCacheService.armazenar(email, code);
+
+        EmailDto emailDto = new EmailDto(
+                email,
+                "Seu código de acesso",
+                "Seu código de acesso é: " + code,
+                UUID.randomUUID()
+        );
+        userProducer.publicarMensagemEmail(emailDto);
     }
 }
