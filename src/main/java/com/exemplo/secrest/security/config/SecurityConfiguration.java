@@ -23,7 +23,8 @@ public class SecurityConfiguration {
     public static final String[] ENDPOINTS_WITH_AUTHENTICATION_NOT_REQUIRED = {
             "/users/login",
             "/users",
-            "/auth/request-code"
+            "/auth/request-code",
+            "/auth/verify-code"
     };
 
     // ==================== ENDPOINTS RESTRITOS ====================

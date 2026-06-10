@@ -27,6 +27,10 @@ public class CodigoCacheService {
         return entry.code();
     }
 
+    public void remover(String email) {
+        cache.remove(email);
+    }
+
     @Scheduled(fixedDelay = 60_000)
     public void limparExpirados() {
         Instant now = Instant.now();

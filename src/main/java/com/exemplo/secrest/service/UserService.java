@@ -92,4 +92,18 @@ public class UserService {
         );
         userProducer.publicarMensagemEmail(emailDto);
     }
+
+    public RecoveryJwtTokenDto verifyCode(String email, String code) {
+        String storedCode = codigoCacheService.buscar(email);
+        if (storedCode == null || !storedCode.equals(code)) {
+            throw new RuntimeException("Código inválido ou expirado");
+        }
+        codigoCacheService.remover(email);
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Usuário não encontrado: " + email));
+
+        String token = jwtTokenService.generateToken(new UserDetailsImpl(user));
+        return new RecoveryJwtTokenDto(token);
+    }
 }
