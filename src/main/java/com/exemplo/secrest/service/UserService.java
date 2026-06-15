@@ -4,6 +4,7 @@ import com.exemplo.secrest.dto.CreateUserDto;
 import com.exemplo.secrest.dto.EmailDto;
 import com.exemplo.secrest.dto.LoginUserDto;
 import com.exemplo.secrest.dto.RecoveryJwtTokenDto;
+import com.exemplo.secrest.dto.UpdateProfileDto;
 import com.exemplo.secrest.dto.UserProfileDto;
 import com.exemplo.secrest.entity.Role;
 import com.exemplo.secrest.entity.User;
@@ -65,10 +66,26 @@ public class UserService {
     public UserProfileDto getUserProfile(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("Usuário não encontrado: " + email));
+        return toProfileDto(user);
+    }
+
+    public UserProfileDto updateProfile(String email, UpdateProfileDto dto) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Usuário não encontrado: " + email));
+
+        user.setName(dto.name());
+        // apenas uma role por usuário: substitui a lista pela nova role
+        user.setRoles(List.of(Role.builder().name(dto.role()).build()));
+
+        User updated = userRepository.save(user);
+        return toProfileDto(updated);
+    }
+
+    private UserProfileDto toProfileDto(User user) {
         List<String> roles = user.getRoles().stream()
                 .map(role -> role.getName().name())
                 .toList();
-        return new UserProfileDto(user.getId(), user.getEmail(), roles);
+        return new UserProfileDto(user.getId(), user.getName(), user.getEmail(), roles);
     }
 
     public void requestCode(String email) {

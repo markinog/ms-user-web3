@@ -3,6 +3,7 @@ package com.exemplo.secrest.controller;
 import com.exemplo.secrest.dto.CreateUserDto;
 import com.exemplo.secrest.dto.LoginUserDto;
 import com.exemplo.secrest.dto.RecoveryJwtTokenDto;
+import com.exemplo.secrest.dto.UpdateProfileDto;
 import com.exemplo.secrest.dto.UserProfileDto;
 import com.exemplo.secrest.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +36,14 @@ public class UserController {
     public ResponseEntity<UserProfileDto> getCurrentUser(Authentication authentication) {
         UserProfileDto profile = userService.getUserProfile(authentication.getName());
         return ResponseEntity.ok(profile);
+    }
+
+    @PostMapping("/update-profile")
+    public ResponseEntity<UserProfileDto> updateProfile(Authentication authentication,
+                                                        @RequestBody UpdateProfileDto dto) {
+        String email = authentication.getName();
+        UserProfileDto updated = userService.updateProfile(email, dto);
+        return ResponseEntity.ok(updated);
     }
 
 

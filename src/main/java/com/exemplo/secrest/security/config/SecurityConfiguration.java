@@ -50,6 +50,7 @@ public class SecurityConfiguration {
                         .requestMatchers(ENDPOINTS_ADMIN).hasRole("ADMINISTRATOR")
                         .requestMatchers(ENDPOINTS_CUSTOMER).hasRole("CUSTOMER")
                         .requestMatchers("/users/me").authenticated()
+                        .requestMatchers("/users/update-profile").authenticated()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(userAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
