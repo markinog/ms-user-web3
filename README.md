@@ -1,197 +1,234 @@
-# Como rodar o **ms-user** (User Service)
+# ms-user-web3 — User Service
 
-Este repositório contém **apenas o User Service** (`ms-user`), feito em Spring Boot.
-Ele é um dos três serviços do projeto:
+Microsserviço de autenticação com **Spring Boot 4**, **Spring Security**, **JWT** e **RabbitMQ (CloudAMQP)**. Faz parte de um sistema distribuído composto por três peças:
 
-| Serviço      | Repositório            | Porta padrão | Função                                            |
-|--------------|------------------------|--------------|---------------------------------------------------|
-| **ms-user**  | este repositório       | `8081`       | Cadastro/login, JWT, perfil, envia código por fila |
-| ms-email     | repositório separado   | —            | Consome a fila e envia o e-mail com o código       |
-| frontend     | repositório separado   | `3000`       | Telas de login, cadastro de nome/cargo e dashboard |
-
-> **Não existe front-end dentro deste repositório.** O front (`register.html`,
-> `dashboard.html`, rota `/api/protected`, etc.) é um projeto Node separado que
-> apenas consome a API deste serviço. As instruções para o front estão no final,
-> na seção [Front-end](#front-end-projeto-separado).
+| Serviço         | Repositório          | Porta |
+| --------------- | -------------------- | ----- |
+| **User Service** | `ms-user-web3` ← você está aqui | `8081` |
+| Email Service   | `ms-email-web3`      | `8082` |
+| Frontend        | dentro do `ms-email-web3` | `3000` |
 
 ---
 
-## 1. Pré-requisitos
+## Pré-requisitos
 
-- **JDK 21** (o projeto usa `--enable-preview` com Java 21).
-- **Maven 3.9+** — ou abra o projeto numa IDE (IntelliJ/Eclipse/VS Code) que já traga o Maven.
-  > Este repositório **não** possui o Maven Wrapper (`mvnw`). Se você não tem o `mvn`
-  > instalado, o caminho mais simples é abrir na IntelliJ e rodar `SecrestApplication`.
-- **MySQL 8** rodando localmente (ou acessível por rede).
-- **Conta CloudAMQP** (RabbitMQ gerenciado) — usada para publicar a mensagem de e-mail.
-- **Conta Gmail** com senha de app — usada **pelo ms-email** para enviar o e-mail.
-  (O ms-user não envia e-mail diretamente; ele só publica na fila.)
+- **Java 21+** (o `pom.xml` usa Java 21 com `--enable-preview`)
+- **Maven** (ou use o Wrapper `mvnw` incluído no projeto)
+- **MySQL 8** rodando localmente na porta `3306`
+- Conta no **CloudAMQP** (plano gratuito *Little Lemur*) com a URI AMQP em mãos
 
 ---
 
-## 2. Banco de dados
+## 1. Banco de dados
 
-Crie o banco `ms_user` no MySQL:
+Crie o schema no MySQL antes de subir a aplicação:
 
 ```sql
-CREATE DATABASE ms_user CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE ms_user;
 ```
 
-As tabelas (`users`, `roles`, `users_roles`) são criadas/atualizadas automaticamente
-pelo Hibernate, pois `spring.jpa.hibernate.ddl-auto=update`. O campo **`name`** já está
-mapeado na entidade `User` e será adicionado à tabela na primeira execução.
+> As tabelas (`users`, `roles`) são criadas automaticamente pelo Hibernate (`ddl-auto=update`) na primeira execução.
 
 ---
 
-## 3. Variáveis de ambiente
+## 2. Variáveis de ambiente
 
-O `application.properties` lê tudo de variáveis de ambiente:
+O projeto usa um arquivo `.env` (veja o modelo `.env.example` na raiz):
+
+```
+DB_URL=jdbc:mysql://localhost:3306/ms_user?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+DB_USERNAME=root
+DB_PASSWORD=sua_senha_mysql
+JWT_SECRET=uma_string_secreta_longa_e_aleatoria
+```
+
+> **Não commite o `.env`** — ele já está no `.gitignore`.
+
+Você também precisa da URI do CloudAMQP. Adicione ao `.env` (ou diretamente no `application.properties`):
+
+```
+RABBITMQ_ADDRESS=amqps://usuario:senha@beaver.rmq.cloudamqp.com/vhost
+```
+
+E certifique-se de que o `application.properties` referencia a variável:
 
 ```properties
-spring.datasource.url=${DB_URL}
-spring.datasource.username=${DB_USERNAME}
-spring.datasource.password=${DB_PASSWORD}
-jwt.secret=${JWT_SECRET}
 spring.rabbitmq.addresses=${RABBITMQ_ADDRESS}
+broker.queue.email.name=default.email
 ```
-
-Há um arquivo `.env.example` como referência. **Atenção:** o Spring Boot não carrega
-`.env` automaticamente — você precisa exportar as variáveis no terminal (ou configurá-las
-na IDE em *Run Configuration → Environment variables*).
-
-Variáveis necessárias:
-
-| Variável           | Exemplo                                                                                      |
-|--------------------|----------------------------------------------------------------------------------------------|
-| `DB_URL`           | `jdbc:mysql://localhost:3306/ms_user?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true` |
-| `DB_USERNAME`      | `root`                                                                                        |
-| `DB_PASSWORD`      | `suaSenha`                                                                                    |
-| `JWT_SECRET`       | uma string secreta longa, ex.: `minha-chave-super-secreta-1234567890`                        |
-| `RABBITMQ_ADDRESS` | a URL AMQP do CloudAMQP, ex.: `amqps://user:pass@host.rmq.cloudamqp.com/vhost`               |
-
-### Definindo as variáveis no PowerShell (Windows)
-
-```powershell
-$env:DB_URL = "jdbc:mysql://localhost:3306/ms_user?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
-$env:DB_USERNAME = "root"
-$env:DB_PASSWORD = "suaSenha"
-$env:JWT_SECRET = "minha-chave-super-secreta-1234567890"
-$env:RABBITMQ_ADDRESS = "amqps://user:pass@host.rmq.cloudamqp.com/vhost"
-```
-
-(No Linux/macOS use `export DB_URL=...` etc.)
 
 ---
 
-## 4. Executar o serviço
+## 3. Executando
 
-Com as variáveis definidas **no mesmo terminal**:
+### Opção A — Maven Wrapper (recomendado)
 
-```powershell
-# via Maven
-mvn spring-boot:run
+**Linux / macOS:**
+
+```bash
+# 1. Carregue as variáveis de ambiente
+set -a; source .env; set +a
+
+# 2. Suba o serviço
+./mvnw spring-boot:run
 ```
 
-ou, gerando o JAR:
+**Windows (PowerShell):**
 
 ```powershell
-mvn clean package
-java --enable-preview -jar target/ms-user-0.0.1-SNAPSHOT.jar
+# 1. Carregue as variáveis de ambiente
+Get-Content .env | Where-Object { $_ -match '=' } | ForEach-Object {
+    $p = $_ -split '=', 2
+    [Environment]::SetEnvironmentVariable($p[0].Trim(), $p[1].Trim())
+}
+
+# 2. Suba o serviço
+.\mvnw.cmd spring-boot:run
 ```
 
-ou, pela **IDE**: rode a classe `SecrestApplication` (lembre de configurar as variáveis
-de ambiente na Run Configuration).
+### Opção B — Build + JAR
+
+```bash
+./mvnw clean package -DskipTests
+java -jar target/ms-user-0.0.1-SNAPSHOT.jar
+```
 
 O serviço sobe em **http://localhost:8081**.
 
 ---
 
-## 5. Endpoints principais
+## 4. Endpoints
 
-### Públicos
-| Método | Rota                  | Descrição                               |
-|--------|-----------------------|-----------------------------------------|
-| POST   | `/auth/request-code`  | Recebe `{ "email": "..." }` e envia o código por e-mail (via fila). |
-| POST   | `/auth/verify-code`   | Recebe `{ "email": "...", "code": "..." }` e devolve o **token JWT**. |
-| POST   | `/users/login`        | Login por e-mail/senha (devolve JWT).   |
-| POST   | `/users`              | Cria usuário (uso administrativo/teste).|
+### Autenticação e usuários
 
-### Autenticados (header `Authorization: Bearer <token>`)
-| Método | Rota                      | Descrição                                                        |
-|--------|---------------------------|------------------------------------------------------------------|
-| POST   | `/users/update-profile`   | **(Etapa 4)** Atualiza `name` e substitui a role do usuário.     |
-| GET    | `/users/me`               | Retorna o perfil do usuário logado (`id`, `name`, `email`, `roles`). |
-| GET    | `/users/test/customer`    | Teste de acesso para `ROLE_CUSTOMER`.                            |
-| GET    | `/users/test/administrator` | Teste de acesso para `ROLE_ADMINISTRATOR`.                     |
+| Método | Endpoint | Auth | Descrição |
+| ------ | -------- | ---- | --------- |
+| `POST` | `/users` | ❌ Pública | Cria um novo usuário com e-mail, senha e role |
+| `POST` | `/users/login` | ❌ Pública | Autentica e retorna um token JWT |
+| `GET`  | `/users/test/customer` | ✅ JWT + `ROLE_CUSTOMER` | Endpoint protegido de teste |
+| `GET`  | `/users/me` | ✅ JWT | Retorna dados do usuário autenticado |
+| `POST` | `/users/update-profile` | ✅ JWT | Atualiza nome e role do usuário |
 
-### Corpo do `POST /users/update-profile`
+### Fluxo OTP (código de acesso)
 
+| Método | Endpoint | Auth | Descrição |
+| ------ | -------- | ---- | --------- |
+| `POST` | `/auth/request-code` | ❌ Pública | Gera código de 6 dígitos, armazena em cache e publica na fila RabbitMQ |
+| `POST` | `/auth/verify-code` | ❌ Pública | Valida o código e retorna JWT se correto |
+
+### Exemplos de corpo das requisições
+
+**POST `/users`**
 ```json
 {
-  "name": "Marcus Silva",
+  "email": "joao@example.com",
+  "password": "senha123",
   "role": "ROLE_CUSTOMER"
 }
 ```
 
-`role` aceita `ROLE_CUSTOMER` ou `ROLE_ADMINISTRATOR`. O usuário fica com **apenas uma role**
-(a lista é substituída). A resposta é o perfil atualizado:
-
+**POST `/users/login`**
 ```json
 {
-  "id": 1,
-  "name": "Marcus Silva",
-  "email": "marcus@exemplo.com",
-  "roles": ["ROLE_CUSTOMER"]
+  "email": "joao@example.com",
+  "password": "senha123"
 }
 ```
 
-### Teste rápido com cURL
+**POST `/auth/request-code`**
+```json
+{
+  "email": "joao@example.com"
+}
+```
+> Se o e-mail não existir no banco, um usuário temporário é criado automaticamente com `ROLE_CUSTOMER` e senha aleatória.
 
-```bash
-# 1. Pedir o código
-curl -X POST http://localhost:8081/auth/request-code \
-  -H "Content-Type: application/json" \
-  -d '{"email":"marcus@exemplo.com"}'
+**POST `/auth/verify-code`**
+```json
+{
+  "email": "joao@example.com",
+  "code": "123456"
+}
+```
 
-# 2. Verificar o código recebido por e-mail e pegar o token
-curl -X POST http://localhost:8081/auth/verify-code \
-  -H "Content-Type: application/json" \
-  -d '{"email":"marcus@exemplo.com","code":"123456"}'
-
-# 3. Atualizar o perfil (use o token do passo anterior)
-curl -X POST http://localhost:8081/users/update-profile \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer SEU_TOKEN_JWT" \
-  -d '{"name":"Marcus Silva","role":"ROLE_CUSTOMER"}'
-
-# 4. Conferir o perfil
-curl http://localhost:8081/users/me \
-  -H "Authorization: Bearer SEU_TOKEN_JWT"
+**POST `/users/update-profile`** *(requer `Authorization: Bearer <token>`)*
+```json
+{
+  "name": "João Silva",
+  "role": "ROLE_CUSTOMER"
+}
 ```
 
 ---
 
-## Front-end (projeto separado)
+## 5. Arquitetura interna
 
-O front-end **não está neste repositório**. Ele é um projeto Node (Express) que serve
-as telas e faz proxy para o User Service. Para rodá-lo, no diretório do front:
-
-```bash
-npm install
-npm start        # normalmente sobe em http://localhost:3000
+```
+src/main/java/com/exemplo/msuser/
+├── config/
+│   ├── SecurityConfiguration.java   # Filtros, permissões de rota
+│   └── RabbitMQConfig.java          # Declaração da fila + conversor JSON
+├── controller/
+│   └── UserController.java          # Endpoints REST
+├── dto/
+│   ├── LoginDto.java
+│   ├── CreateUserDto.java
+│   ├── EmailDto.java                # Payload enviado à fila
+│   └── UpdateProfileDto.java
+├── model/
+│   ├── User.java
+│   ├── Role.java
+│   └── RoleName.java (enum)
+├── repository/
+│   └── UserRepository.java
+├── security/
+│   ├── JwtTokenService.java         # Geração e validação de JWT
+│   ├── UserAuthenticationFilter.java
+│   ├── UserDetailsImpl.java
+│   └── UserDetailsServiceImpl.java
+├── service/
+│   ├── UserService.java             # Lógica de negócio
+│   ├── UserProducer.java            # Publica mensagens no RabbitMQ
+│   └── CodigoCacheService.java      # Cache em memória com expiração (5 min)
+└── MsUserApplication.java
 ```
 
-O front consome este serviço (`http://localhost:8081`):
-- `POST /register` (front) → `POST /users/update-profile` (este serviço), enviando o JWT no header `Authorization`;
-- `GET /api/protected` (front) → `GET /users/test/customer` (este serviço);
-- `GET /users/me` para a tela "Meu perfil".
+---
 
-### Fluxo completo de teste
-1. Acesse `http://localhost:3000`.
-2. Digite um e-mail → receba o código por e-mail.
-3. Digite o código → vai para a página de cadastro de nome/cargo.
-4. Preencha nome e escolha o cargo → é redirecionado para o dashboard.
-5. No dashboard, use os botões "Testar endpoint protegido", "Meu perfil" e "Sair".
+## 6. Como o cache de código funciona
 
-> Para o fluxo funcionar de ponta a ponta, os **três serviços** precisam estar no ar:
-> `ms-user` (este, 8081), `ms-email` (consumidor da fila) e o `frontend` (3000).
+O `CodigoCacheService` usa um `ConcurrentHashMap` para armazenar pares `email → código`. Um agendamento via `@Scheduled` varre o mapa e remove entradas com mais de 5 minutos — o código **não é retornado pela API** por segurança.
+
+---
+
+## 7. Como o JWT funciona
+
+O token é gerado pelo `JwtTokenService` (lib `com.auth0:java-jwt 4.4.0`) com o segredo definido em `JWT_SECRET`. Ele é enviado no header:
+
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+O `UserAuthenticationFilter` intercepta todas as requisições protegidas, valida o token e popula o `SecurityContext`.
+
+---
+
+## 8. Integração com o sistema completo
+
+Para o fluxo funcionar de ponta a ponta você precisará também do **Email Service** e do **Frontend** (ambos no repositório `ms-email-web3`):
+
+1. Este serviço publica uma mensagem JSON na fila `default.email` do CloudAMQP.
+2. O Email Service consome a fila e envia o e-mail com o código via Gmail SMTP.
+3. O Frontend (Node.js/Express) serve as telas e faz proxy das chamadas para este serviço.
+
+---
+
+## 9. Solução de problemas
+
+| Sintoma | Causa provável | Solução |
+| ------- | -------------- | ------- |
+| Serviço não sobe | MySQL indisponível ou credenciais erradas | Verifique se o MySQL está rodando e se `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` estão corretos |
+| `401 Unauthorized` em endpoints protegidos | Token ausente ou expirado | Faça login novamente via `/users/login` ou `/auth/verify-code` |
+| Código não chega por e-mail | RabbitMQ mal configurado | Confirme a `RABBITMQ_ADDRESS` e que o Email Service está rodando |
+| `Connection refused` no RabbitMQ | URI do CloudAMQP incorreta | Copie a URI exata do painel CloudAMQP (começa com `amqps://`) |
+| Erro `enable-preview` na compilação | Versão do Java < 21 | Use Java 21+ |
